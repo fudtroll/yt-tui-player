@@ -1,5 +1,6 @@
 """YT TUI Player — Textual TUI App."""
 import random
+import shutil
 import subprocess
 import time
 from textual import on
@@ -560,36 +561,59 @@ class YTTUIApp(App):
 
     # ── Volume ──
 
+    _HAS_WPCTL: bool = shutil.which("wpctl") is not None
+    _HAS_TMX_VOL: bool = shutil.which("termux-volume") is not None
+
+    def _set_vol(self, pct: int):
+        """Set volume; works with wpctl (Linux) or termux-volume (Android)."""
+        if self._HAS_WPCTL:
+            subprocess.run(
+                ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", f"{pct}%"],
+                timeout=5,
+            )
+        elif self._HAS_TMX_VOL:
+            subprocess.run(
+                ["termux-volume", "music", str(pct)],
+                timeout=5,
+            )
+
     def _get_vol(self) -> float:
         """Get current volume (0.0–1.0)."""
         try:
-            r = subprocess.run(
-                ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"],
-                capture_output=True, text=True, timeout=5,
-            )
-            # Output: "Volume: 0.75"
-            parts = r.stdout.strip().split()
-            if parts:
-                return float(parts[-1])
+            if self._HAS_WPCTL:
+                r = subprocess.run(
+                    ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                parts = r.stdout.strip().split()
+                if parts:
+                    return float(parts[-1])
+            elif self._HAS_TMX_VOL:
+                r = subprocess.run(
+                    ["termux-volume"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                # termux-volume outputs JSON array of streams
+                import json
+                streams = json.loads(r.stdout)
+                for s in streams:
+                    if s.get("stream", "") == "music":
+                        return s.get("volume", 75) / 100.0
         except Exception:
             pass
         return 0.75
 
     def action_vol_up(self):
-        subprocess.run(
-            ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%+"],
-            timeout=5,
-        )
-        vol = self._get_vol()
-        self.set_status(f"Volume: {int(vol * 100)}%")
+        vol = int(self._get_vol() * 100)
+        vol = min(100, vol + 5)
+        self._set_vol(vol)
+        self.set_status(f"Volume: {vol}%")
 
     def action_vol_down(self):
-        subprocess.run(
-            ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"],
-            timeout=5,
-        )
-        vol = self._get_vol()
-        self.set_status(f"Volume: {int(vol * 100)}%")
+        vol = int(self._get_vol() * 100)
+        vol = max(0, vol - 5)
+        self._set_vol(vol)
+        self.set_status(f"Volume: {vol}%")
 
     # ── Playback Modes (Repeat / Shuffle) ──
 
