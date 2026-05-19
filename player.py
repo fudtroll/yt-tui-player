@@ -60,4 +60,8 @@ class YTPlayer:
 
 def kill_all_mpv():
     """Kill any lingering mpv processes."""
-    subprocess.run(["pkill", "-f", "mpv.*ytdl"], capture_output=True)
+    try:
+        subprocess.run(["pkill", "-f", "mpv"], capture_output=True)
+    except FileNotFoundError:
+        # Fallback for Termux / systems without pkill
+        subprocess.run(["killall", "mpv"], capture_output=True)
