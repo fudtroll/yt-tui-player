@@ -14,9 +14,11 @@ class PlaylistEntry:
     title: str = ""
     duration: int = 0       # seconds
     added: str = ""         # date string
+    saved: bool = True      # True = in playlist.md, False = temp/unsaved
 
 
 def fmt_duration(sec: int) -> str:
+    sec = int(sec)
     m, s = divmod(sec, 60)
     h, m = divmod(m, 60)
     if h:
@@ -56,7 +58,6 @@ def expand_playlist_url(url: str) -> list[dict]:
             if not line:
                 continue
             data = json.loads(line)
-            # yt-dlp gives either 'url' (full URL) or just video ID
             vid_url = data.get("webpage_url") or data.get("url", url)
             entries.append({
                 "url": vid_url,
@@ -65,6 +66,31 @@ def expand_playlist_url(url: str) -> list[dict]:
         return entries if entries else [{"url": url, "title": ""}]
     except Exception:
         return [{"url": url, "title": ""}]
+
+
+def search_youtube(query: str, limit: int = 10) -> list[dict]:
+    """Search YouTube via yt-dlp. Returns list of {url, title, duration, channel}."""
+    try:
+        result = subprocess.run(
+            ["yt-dlp", f"ytsearch{limit}:{query}", "--dump-json", "--flat-playlist"],
+            capture_output=True, text=True, timeout=20,
+        )
+        if result.returncode != 0:
+            return []
+        entries = []
+        for line in result.stdout.strip().split("\n"):
+            if not line:
+                continue
+            data = json.loads(line)
+            entries.append({
+                "url": data.get("webpage_url") or data.get("url", ""),
+                "title": data.get("title", "Unknown"),
+                "duration": int(data.get("duration") or 0),
+                "channel": data.get("channel") or data.get("uploader") or "",
+            })
+        return entries
+    except Exception:
+        return []
 
 
 class Playlist:
