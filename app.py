@@ -156,6 +156,27 @@ def fmt_player_line(entry: PlaylistEntry | None, playing: bool, elapsed: int = 0
     )
 
 
+def _extract_pl_id(url: str) -> str | None:
+    """Extract playlist/video ID from a YouTube URL as fallback title."""
+    from urllib.parse import urlparse, parse_qs
+    try:
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query)
+        # Try playlist ID first, then video ID
+        pl = qs.get("list", [None])[0]
+        if pl:
+            return pl
+        v = qs.get("v", [None])[0]
+        if v:
+            return v
+        # Handle youtu.be/VIDEO_ID format
+        if "youtu.be" in parsed.netloc:
+            return parsed.path.lstrip("/").split("?")[0] or None
+        return None
+    except Exception:
+        return None
+
+
 # ── Main App ──
 
 class YTTUIApp(App):
@@ -928,6 +949,25 @@ class YTTUIApp(App):
             return
 
         entries = expand_playlist_url(url)
+
+        # Detect expansion failure (yt-dlp can't enumerate this playlist type)
+        is_pl = "playlist" in url or "list=" in url
+        expansion_failed = (
+            len(entries) == 1 and entries[0]["url"] == url
+            and not entries[0]["title"] and is_pl
+        )
+
+        if expansion_failed:
+            # RD radio / unviewable playlist — keep as single entry with fallback title
+            pl_id = _extract_pl_id(url)
+            fallback = f"🎵 Radio [{pl_id}]" if pl_id else "YouTube Playlist"
+            entry = PlaylistEntry(url=url, title=fallback, duration=0, saved=False)
+            self.entries.append(entry)
+            self._update_playlist_ui()
+            self.query_one("#url-input", Input).value = ""
+            self.set_status(f"Added: {fallback} (playlist can't be expanded)")
+            return
+
         if len(entries) == 0:
             self.set_status("No tracks found in URL")
             return
@@ -941,8 +981,12 @@ class YTTUIApp(App):
             # Fetch full metadata only for single video (skip for playlists)
             if len(entries) == 1:
                 title, dur = fetch_metadata(vid_url)
+                if not title or title == vid_url:
+                    title = vid_title or title
             else:
                 title = vid_title or fetch_metadata(vid_url)[0]
+                if not title or title == vid_url:
+                    title = _extract_pl_id(vid_url) or title
                 dur = 0
             entry = PlaylistEntry(
                 url=vid_url, title=title, duration=dur, saved=False,
@@ -955,7 +999,7 @@ class YTTUIApp(App):
         msg = f"Added {new_count} track{'s' if new_count != 1 else ''}"
         if len(entries) > 1:
             msg += " from playlist"
-        msg += "  (+ to save to playlist.md)"
+        msg += "  (+ save with +)"
         self.set_status(msg)
 
     @on(Input.Submitted, "#url-input")
@@ -972,6 +1016,27 @@ class YTTUIApp(App):
             return
 
         entries = expand_playlist_url(url)
+
+        # Detect expansion failure (RD radio / unviewable playlist)
+        is_pl = "playlist" in url or "list=" in url
+        expansion_failed = (
+            len(entries) == 1 and entries[0]["url"] == url
+            and not entries[0]["title"] and is_pl
+        )
+
+        if expansion_failed:
+            # Play directly via mpv (it may work even if yt-dlp can't enumerate)
+            pl_id = _extract_pl_id(url)
+            fallback = f"🎵 Radio [{pl_id}]" if pl_id else "YouTube Playlist"
+            entry = PlaylistEntry(url=url, title=fallback, duration=0, saved=False)
+            self.play_entry(entry)
+            if not any(e.url == url for e in self.entries):
+                self.entries.append(entry)
+                self._update_playlist_ui()
+            self.query_one("#url-input", Input).value = ""
+            self.set_status(f"▶ {fallback}")
+            return
+
         if len(entries) == 0:
             self.set_status("No tracks found in URL")
             return
@@ -979,6 +1044,8 @@ class YTTUIApp(App):
         # Play the first track (mpv handles playlist URLs natively too)
         first = entries[0]
         title, dur = fetch_metadata(first["url"])
+        if not title or title == first["url"]:
+            title = first["title"] or title
         first_entry = PlaylistEntry(
             url=first["url"], title=title, duration=dur, saved=False,
         )
@@ -995,6 +1062,8 @@ class YTTUIApp(App):
                 new_count += 1
                 continue
             vid_title = e["title"] or fetch_metadata(vid_url)[0]
+            if not vid_title or vid_title == vid_url:
+                vid_title = _extract_pl_id(vid_url) or vid_title
             entry = PlaylistEntry(
                 url=vid_url, title=vid_title, duration=0, saved=False,
             )
