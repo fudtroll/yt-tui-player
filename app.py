@@ -453,7 +453,7 @@ class YTTUIApp(App):
         Binding("delete", "delete_selected", show=False, priority=True),
         Binding("+", "save_selected", "+Save", priority=True),
         Binding("-", "delete_selected", "−Del", priority=True),
-        Binding("/", "search", "Search", priority=True),
+        Binding("/", "search", "Search"),
         Binding("r", "refresh", "Refresh", priority=True),
         Binding("q", "quit", "Quit", priority=True),
         Binding("l", "toggle_repeat", "Loop", priority=True),
@@ -935,6 +935,11 @@ class YTTUIApp(App):
         self._update_playlist_ui()
         self.query_one("#url-input", Input).value = ""
         self.set_status(f"Added: {title}  (+ to save to playlist)")
+
+    @on(Input.Submitted, "#url-input")
+    def url_input_enter(self):
+        """Enter in URL input = Add to playlist."""
+        self.btn_add()
 
     @on(Button.Pressed, "#btn-play-url")
     def btn_play_url(self):

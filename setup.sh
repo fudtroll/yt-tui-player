@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ─── YT TUI Player — Setup ────────────────────────────────────
 # One-command setup for new machines.
-# Tested on: fedora 44
+# Tested on: fedora 44, Termux (Android)
 # ───────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -19,13 +19,14 @@ fail()  { echo -e "${R}[FAIL]${N} $1"; exit 1; }
 if [ -n "${TERMUX_VERSION:-}" ] || [ -d /data/data/com.termux ]; then
     info "Detected: Termux (Android)"
     pkg update -y
-    pkg install -y mpv yt-dlp python python-pip
+    pkg install -y mpv yt-dlp python binutils clang make
     for cmd in mpv yt-dlp python; do
         command -v "$cmd" &>/dev/null || warn "$cmd not found"
     done
     echo ""
     echo -e "  ${Y}Note:${N} Volume keys need PipeWire (Linux) or Termux:API (Android)."
-    echo -e "  On Android, install: ${B}pkg install termux-api${N}"
+    echo -e "  Install termux-api:  ${B}pkg install termux-api${N}"
+    echo -e "  Then in Termux:API app, grant notification access for volume control."
     echo ""
     SETUP_TERMUX=1
 elif command -v dnf &>/dev/null; then
@@ -65,7 +66,12 @@ if [ -n "${SETUP_TERMUX:-}" ]; then
     PYTHON_BIN="python"
 fi
 if [ ! -d ".venv" ]; then
-    $PYTHON_BIN -m venv .venv
+    # Try venv; fall back to virtualenv if ensurepip missing (some Termux builds)
+    if ! $PYTHON_BIN -m venv .venv 2>/dev/null; then
+        warn "python -m venv failed, trying virtualenv..."
+        pip install virtualenv 2>/dev/null
+        $PYTHON_BIN -m virtualenv .venv
+    fi
     ok "Created .venv"
 else
     ok ".venv already exists"
@@ -75,7 +81,10 @@ fi
 info "Installing Python packages..."
 source .venv/bin/activate
 pip install --upgrade pip -q
-pip install -r requirements.txt -q
+if ! pip install -r requirements.txt -q; then
+    warn "pip install failed, retrying with --no-build-isolation..."
+    pip install --no-build-isolation -r requirements.txt -q
+fi
 ok "Python packages installed"
 
 echo ""
