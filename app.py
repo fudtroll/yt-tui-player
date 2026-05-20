@@ -15,7 +15,7 @@ from textual.widgets import (
 )
 
 from config import *
-from playlist import Playlist, PlaylistEntry, fmt_duration, search_youtube, fetch_metadata
+from playlist import Playlist, PlaylistEntry, fmt_duration, search_youtube, fetch_metadata, expand_playlist_url
 from player import YTPlayer, kill_all_mpv
 
 
@@ -921,20 +921,42 @@ class YTTUIApp(App):
 
     @on(Button.Pressed, "#btn-add")
     def btn_add(self):
-        """Add URL as unsaved entry (doesn't write to playlist.md yet)."""
+        """Add URL as unsaved entry. Expands playlists into individual tracks."""
         url = self.query_one("#url-input", Input).value.strip()
         if not url:
             self.set_status("Paste a URL first")
             return
-        title, dur = fetch_metadata(url)
-        entry = PlaylistEntry(url=url, title=title, duration=dur, saved=False)
-        if any(e.url == entry.url for e in self.entries):
-            self.set_status("Already in playlist")
+
+        entries = expand_playlist_url(url)
+        if len(entries) == 0:
+            self.set_status("No tracks found in URL")
             return
-        self.entries.append(entry)
+
+        new_count = 0
+        for e in entries:
+            vid_url = e["url"]
+            vid_title = e["title"]
+            if any(ex.url == vid_url for ex in self.entries):
+                continue
+            # Fetch full metadata only for single video (skip for playlists)
+            if len(entries) == 1:
+                title, dur = fetch_metadata(vid_url)
+            else:
+                title = vid_title or fetch_metadata(vid_url)[0]
+                dur = 0
+            entry = PlaylistEntry(
+                url=vid_url, title=title, duration=dur, saved=False,
+            )
+            self.entries.append(entry)
+            new_count += 1
+
         self._update_playlist_ui()
         self.query_one("#url-input", Input).value = ""
-        self.set_status(f"Added: {title}  (+ to save to playlist)")
+        msg = f"Added {new_count} track{'s' if new_count != 1 else ''}"
+        if len(entries) > 1:
+            msg += " from playlist"
+        msg += "  (+ to save to playlist.md)"
+        self.set_status(msg)
 
     @on(Input.Submitted, "#url-input")
     def url_input_enter(self):
@@ -943,13 +965,43 @@ class YTTUIApp(App):
 
     @on(Button.Pressed, "#btn-play-url")
     def btn_play_url(self):
+        """Play URL immediately. Expands playlists and adds all tracks to list."""
         url = self.query_one("#url-input", Input).value.strip()
         if not url:
             self.set_status("Paste a URL first")
             return
-        title, dur = fetch_metadata(url)
-        entry = PlaylistEntry(url=url, title=title, duration=dur, saved=False)
-        self.play_entry(entry)
-        if not any(e.url == entry.url for e in self.entries):
+
+        entries = expand_playlist_url(url)
+        if len(entries) == 0:
+            self.set_status("No tracks found in URL")
+            return
+
+        # Play the first track (mpv handles playlist URLs natively too)
+        first = entries[0]
+        title, dur = fetch_metadata(first["url"])
+        first_entry = PlaylistEntry(
+            url=first["url"], title=title, duration=dur, saved=False,
+        )
+        self.play_entry(first_entry)
+
+        # Add all unique tracks to playlist
+        new_count = 0
+        for e in entries:
+            vid_url = e["url"]
+            if any(ex.url == vid_url for ex in self.entries):
+                continue
+            if vid_url == first["url"]:
+                self.entries.append(first_entry)
+                new_count += 1
+                continue
+            vid_title = e["title"] or fetch_metadata(vid_url)[0]
+            entry = PlaylistEntry(
+                url=vid_url, title=vid_title, duration=0, saved=False,
+            )
             self.entries.append(entry)
+            new_count += 1
+
+        if new_count > 0:
             self._update_playlist_ui()
+        self.query_one("#url-input", Input).value = ""
+        self.set_status(f"▶ Now playing: {title}")

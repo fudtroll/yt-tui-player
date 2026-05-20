@@ -27,7 +27,8 @@ def fmt_duration(sec: int) -> str:
 
 
 def fetch_metadata(url: str) -> tuple[str, int]:
-    """Fetch title and duration from yt-dlp. Returns (title, duration_sec)."""
+    """Fetch title and duration from yt-dlp. Returns (title, duration_sec).
+    For playlists, returns the first video's metadata."""
     try:
         result = subprocess.run(
             ["yt-dlp", "--dump-json", url],
@@ -35,7 +36,12 @@ def fetch_metadata(url: str) -> tuple[str, int]:
         )
         if result.returncode != 0:
             return (url, 0)
-        data = json.loads(result.stdout)
+        # Handle multi-line output (playlists → take first video)
+        lines = result.stdout.strip().split("\n")
+        first_line = lines[0] if lines else ""
+        if not first_line:
+            return (url, 0)
+        data = json.loads(first_line)
         title = data.get("title") or data.get("webpage_url_basename", url)
         duration = data.get("duration") or 0
         return (title, int(duration))
