@@ -17,6 +17,7 @@ from textual.widgets import (
 from config import *
 from playlist import Playlist, PlaylistEntry, fmt_duration, search_youtube, fetch_metadata, expand_playlist_url
 from player import YTPlayer, kill_all_mpv
+from textual.events import Resize
 
 
 # ── Playlist Item ──
@@ -35,20 +36,26 @@ class PlaylistItem(Static):
         playing_mark = "[#00ff00]▶[/] " if self.is_active else "  "
 
         if self.entry.saved:
-            # [DB] = already in database
             tag = "[#888888][✓][/] "
             name_color = "#e0e0e0"
         else:
-            # [+] = new, needs saving
             tag = "[#00ff00][+][/] "
             name_color = "#aaaaaa"
 
+        # Dynamic name width based on terminal size
+        try:
+            term_w = self.app.size.width
+        except Exception:
+            term_w = 80
+        # 2 (mark) + 4 (tag) + 2 (spaces) + 11 (dur) + border/padding = ~21 overhead
+        max_name = max(8, term_w - 18)
+
         name = self.entry.title or self.entry.url
-        if len(name) > 46:
-            name = name[:43] + "..."
+        if len(name) > max_name:
+            name = name[: max_name - 3] + "..."
 
         return (
-            f"{playing_mark}{tag}[{name_color}]{name:<46}[/]{dur_part}"
+            f"{playing_mark}{tag}[{name_color}]{name:<{max_name}}[/]{dur_part}"
         )
 
 
@@ -92,13 +99,22 @@ class SearchScreen(ModalScreen):
             return
         for i, r in enumerate(self._results):
             dur = fmt_duration(r["duration"]) if r["duration"] else "—:—"
+            try:
+                sw = self.app.size.width
+            except Exception:
+                sw = 80
+            # Usable width: terminal - modal margin(4) - border(2) - padding(2) = -8
+            usable = max(30, sw - 8)
+            # Distribute: dur(7) + 4 spaces + channel(15 min) + title(rest)
+            name_w = max(10, usable - 28)
+            ch_w = max(8, usable - name_w - 30)
             title = r["title"]
-            if len(title) > 40:
-                title = title[:37] + "..."
+            if len(title) > name_w:
+                title = title[: max(name_w - 3, 1)] + "..."
             ch = r.get("channel", "")
-            if len(ch) > 20:
-                ch = ch[:17] + "..."
-            label = f"{title:<40}  {dur:>7}  {ch:<20}"
+            if len(ch) > ch_w:
+                ch = ch[: max(ch_w - 3, 1)] + "..."
+            label = f"{title:<{name_w}}  {dur:>7}  {ch:<{ch_w}}"
             sl.add_option((label, i, False))  # (prompt, value, initial_selected)
 
     @on(SelectionList.SelectionToggled, "#search-results")
@@ -139,19 +155,21 @@ class SearchScreen(ModalScreen):
 
 # ── Player Info Formatter ──
 
-def fmt_player_line(entry: PlaylistEntry | None, playing: bool, elapsed: int = 0) -> str:
+def fmt_player_line(entry: PlaylistEntry | None, playing: bool, elapsed: int = 0, term_w: int = 80) -> str:
     """Show title + elapsed / total."""
+    # Dynamic name width based on terminal size
+    max_name = max(8, term_w - 20)  # 20 for icon, time, padding
     if not entry or not playing:
         return (
             "  [#888888]■ stopped[/]  [#888888]— / —[/]"
         )
     name = entry.title or entry.url
-    if len(name) > 40:
-        name = name[:37] + "..."
+    if len(name) > max_name:
+        name = name[: max_name - 3] + "..."
     cur = fmt_duration(elapsed)
     total = fmt_duration(entry.duration) if entry.duration else "--:--"
     return (
-        f"  [#00ff00]▶[/] [#e0e0e0]{name:<40}[/]"
+        f"  [#00ff00]▶[/] [#e0e0e0]{name:<{max_name}}[/]"
         f"  [#888888]{cur} / {total}[/]"
     )
 
@@ -183,9 +201,16 @@ class YTTUIApp(App):
     """YT TUI Player."""
 
     CSS = """
-    Screen, #app-container {
+    Screen {
         background: #121212;
         color: #e0e0e0;
+    }
+
+    #app-container {
+        background: #121212;
+        color: #e0e0e0;
+        overflow-y: auto;
+        height: 1fr;
     }
 
     Header {
@@ -495,10 +520,42 @@ class YTTUIApp(App):
         self.repeat: bool = False
         self.shuffle: bool = False
         self._was_playing: bool = False
+        self._compact: bool = False
         # Live timer
         self._play_start: float = 0.0
         self._elapsed: int = 0
         self._timer = None
+
+    # ── Responsive Layout ──
+
+    def on_resize(self, event: Resize):
+        """Detect small terminals → compact layout."""
+        cols = event.size.width
+        rows = event.size.height
+        is_compact = cols < 55 or rows < 22
+        if is_compact == self._compact:
+            return
+        self._compact = is_compact
+        self._apply_compact_layout()
+
+    def _apply_compact_layout(self):
+        """Reduce padding & button sizes on small screens."""
+        smaller = self._compact
+        try:
+            for btn_id in ["btn-vol-down", "btn-vol-up"]:
+                b = self.query_one(f"#{btn_id}", Button)
+                b.styles.min_width = "2" if smaller else "4"
+            for btn_id in ["btn-play-url", "btn-add"]:
+                b = self.query_one(f"#{btn_id}", Button)
+                b.styles.min_width = "4" if smaller else "6"
+            # Tighter URL row
+            url_row = self.query_one("#url-row")
+            url_row.styles.height = "2" if smaller else "3"
+            # Hide slider row on very small screens
+            slider = self.query_one("#slider-row")
+            slider.styles.display = "none" if (smaller and self.size.width < 40) else "block"
+        except NoMatches:
+            pass
 
     # ── Compose ──
 
@@ -744,6 +801,7 @@ class YTTUIApp(App):
                 self.current_entry if self.player.is_alive() else None,
                 self.player.is_alive(),
                 self._elapsed if self.player.is_alive() else 0,
+                term_w=self.size.width,
             )
             self.query_one("#player-info", Static).update(line)
         except NoMatches:
