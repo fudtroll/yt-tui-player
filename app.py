@@ -324,6 +324,11 @@ class YTTUIApp(App):
 
     /* ── CONTROLS ── */
     #controls-bar {
+        height: auto;
+        align: center middle;
+    }
+
+    #ctrl-row1, #ctrl-row2 {
         height: 3;
         align: center middle;
     }
@@ -551,6 +556,10 @@ class YTTUIApp(App):
             # Tighter URL row
             url_row = self.query_one("#url-row")
             url_row.styles.height = "2" if smaller else "3"
+            # Tighter control rows
+            for rid in ["ctrl-row1", "ctrl-row2"]:
+                r = self.query_one(f"#{rid}")
+                r.styles.height = "2" if smaller else "3"
             # Hide slider row on very small screens
             slider = self.query_one("#slider-row")
             slider.styles.display = "none" if (smaller and self.size.width < 40) else "block"
@@ -572,15 +581,17 @@ class YTTUIApp(App):
                     yield Button("−Vol", id="btn-vol-down")
                     yield Static(id="player-slider")
                     yield Button("+Vol", id="btn-vol-up")
-                with Horizontal(id="controls-bar"):
-                    yield Button("↻", id="btn-repeat")
-                    yield Button("⇄", id="btn-shuffle")
-                    yield Button("Play", id="btn-play", variant="success")
-                    yield Button("Stop", id="btn-stop", variant="error")
-                    yield Button("Next", id="btn-next")
-                    yield Button("+Save", id="btn-save-entry", variant="primary")
-                    yield Button("−Del", id="btn-del-entry", variant="error")
-                    yield Button("Search", id="btn-search")
+                with Vertical(id="controls-bar"):
+                    with Horizontal(id="ctrl-row1"):
+                        yield Button("↻", id="btn-repeat")
+                        yield Button("⇄", id="btn-shuffle")
+                        yield Button("Play", id="btn-play", variant="success")
+                        yield Button("Stop", id="btn-stop", variant="error")
+                        yield Button("Next", id="btn-next")
+                    with Horizontal(id="ctrl-row2"):
+                        yield Button("+Save", id="btn-save-entry", variant="primary")
+                        yield Button("−Del", id="btn-del-entry", variant="error")
+                        yield Button("Search", id="btn-search")
                 with Horizontal(id="url-row"):
                     yield Button("▶URL", id="btn-play-url", variant="primary")
                     yield Input(placeholder="Paste YouTube URL here...", id="url-input")
